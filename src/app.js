@@ -70,6 +70,13 @@ document.addEventListener('DOMContentLoaded', () => {
         selectedElement = e.target.parentElement;
         selectElement(selectedElement);
         
+        // Store initial mouse position and element size to calculate relative changes
+        const rect = selectedElement.getBoundingClientRect();
+        selectedElement.initialWidth = rect.width;
+        selectedElement.initialHeight = rect.height;
+        selectedElement.initialMouseX = e.clientX;
+        selectedElement.initialMouseY = e.clientY;
+        
         e.stopPropagation();
     }
     
@@ -98,12 +105,16 @@ document.addEventListener('DOMContentLoaded', () => {
     // Document events for dragging and resizing
     document.addEventListener('mousemove', (e) => {
         if (resizing && selectedElement) {
-            const rect = canvas.getBoundingClientRect();
-            const width = Math.max(40, e.clientX - rect.left - selectedElement.offsetLeft);
-            const height = Math.max(40, e.clientY - rect.top - selectedElement.offsetTop);
+            // Calculate the change in mouse position from initial click
+            const deltaX = e.clientX - selectedElement.initialMouseX;
+            const deltaY = e.clientY - selectedElement.initialMouseY;
             
-            selectedElement.style.width = `${width}px`;
-            selectedElement.style.height = `${height}px`;
+            // Add the change to the initial size
+            const newWidth = Math.max(40, selectedElement.initialWidth + deltaX);
+            const newHeight = Math.max(40, selectedElement.initialHeight + deltaY);
+            
+            selectedElement.style.width = `${newWidth}px`;
+            selectedElement.style.height = `${newHeight}px`;
         } else if (draggedElement) {
             const rect = canvas.getBoundingClientRect();
             let left = e.clientX - rect.left - dragOffsetX;
@@ -125,7 +136,17 @@ document.addEventListener('DOMContentLoaded', () => {
             finalizeDropping(draggedElement);
             draggedElement = null;
         }
-        resizing = false;
+        
+        if (resizing && selectedElement) {
+            // Check if the resized element is nested, and update parent sizes
+            let parent = selectedElement.parentElement;
+            if (parent !== canvas && parent.classList.contains('element')) {
+                expandParentToFitChildren(parent);
+            }
+            resizing = false;
+        } else {
+            resizing = false;
+        }
     });
     
     // Check if element is over a dropzone
@@ -137,11 +158,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (dropzone === element) return;
             
             const rect = dropzone.getBoundingClientRect();
+            // Just check if upper left corner is inside dropzone
             if (
-                e.clientX > rect.left &&
-                e.clientX < rect.right &&
-                e.clientY > rect.top &&
-                e.clientY < rect.bottom
+                e.clientX - dragOffsetX > rect.left &&
+                e.clientX - dragOffsetX < rect.right &&
+                e.clientY - dragOffsetY > rect.top &&
+                e.clientY - dragOffsetY < rect.bottom
             ) {
                 highlightDropzone(dropzone);
                 foundDropzone = true;
@@ -166,18 +188,19 @@ document.addEventListener('DOMContentLoaded', () => {
     // Finalize dropping an element
     function finalizeDropping(element) {
         const dropzones = document.querySelectorAll('.dropzone');
+        const elemRect = element.getBoundingClientRect();
         
         dropzones.forEach(dropzone => {
             if (dropzone === element) return;
             
             const dropRect = dropzone.getBoundingClientRect();
-            const elemRect = element.getBoundingClientRect();
             
+            // Check if upper left corner of element is inside dropzone
             if (
                 elemRect.left > dropRect.left &&
-                elemRect.right < dropRect.right &&
+                elemRect.left < dropRect.right &&
                 elemRect.top > dropRect.top &&
-                elemRect.bottom < dropRect.bottom
+                elemRect.top < dropRect.bottom
             ) {
                 nestElement(element, dropzone);
             }
@@ -196,12 +219,55 @@ document.addEventListener('DOMContentLoaded', () => {
         const relativeTop = childRect.top - parentRect.top;
         
         // Remove from canvas and add to parent
-        canvas.removeChild(child);
+        if (child.parentElement === canvas) {
+            canvas.removeChild(child);
+        } else {
+            child.parentElement.removeChild(child);
+        }
         parent.appendChild(child);
         
         // Update position to be relative to new parent
         child.style.position = 'absolute';
         child.style.left = `${relativeLeft}px`;
         child.style.top = `${relativeTop}px`;
+        
+        // Check if parent needs to expand to fit the child
+        expandParentToFitChildren(parent);
+    }
+    
+    // Expand parent to fit all children
+    function expandParentToFitChildren(parent) {
+        const children = Array.from(parent.querySelectorAll('.element'));
+        if (children.length === 0) return;
+        
+        let minLeft = Infinity;
+        let minTop = Infinity;
+        let maxRight = 0;
+        let maxBottom = 0;
+        
+        // Find the bounds of all children
+        children.forEach(child => {
+            const left = parseInt(child.style.left) || 0;
+            const top = parseInt(child.style.top) || 0;
+            const width = parseInt(child.style.width) || 0;
+            const height = parseInt(child.style.height) || 0;
+            
+            minLeft = Math.min(minLeft, left);
+            minTop = Math.min(minTop, top);
+            maxRight = Math.max(maxRight, left + width);
+            maxBottom = Math.max(maxBottom, top + height);
+        });
+        
+        // Add padding
+        const padding = 20;
+        
+        // Set parent size to contain all children plus padding
+        parent.style.width = `${maxRight + padding}px`;
+        parent.style.height = `${maxBottom + padding}px`;
+        
+        // If this parent is nested, recursively expand its parent too
+        if (parent.parentElement !== canvas && parent.parentElement.classList.contains('element')) {
+            expandParentToFitChildren(parent.parentElement);
+        }
     }
 });
